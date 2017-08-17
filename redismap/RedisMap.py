@@ -8,36 +8,54 @@ class RedisMap(object):
     def __init__(self, rds, name):
         self._r = rds
         self._name = name
-        self._list_key_prefix = '[LIST_FOR-%s]:' % name
+        self._redismap_prefix = ':RedisMap-'
 
-    def __is_list(self, key):
-        return key and key.startswith(self._list_key_prefix)
+    def _get_type(self, key):
+        value = self._r.hget(self._name, key)
+        logging.debug('get type of %s value : %s' % (key, str(value)))
+        if value.startswith(self._redismap_prefix):
+            t = self._r.type(value)
+            if t == 'list':
+                return RedisList
+            elif t == 'hash':
+                return RedisMap
+        return str
 
     def __getitem__(self, key):
         v = self._r.hget(self._name, key)
-        if self.__is_list(v):
-            return RedisList(self._r, v)
+
+        t = self._get_type(key)
+        logging.debug('get item of %s type : %s' % (key, str(t)))
+        if t != str:
+            return t(self._r, v)
 
         return v
 
     def __setitem__(self, key, value):
-        if isinstance(value, list) or isinstance(value, tuple):
-            new_value = self._list_key_prefix + str(key)
-            l = RedisList(self._r, new_value)
-            l.clear()  # 先清空之前存在的
-            for v in value:
-                l.append(v)
+
+        if isinstance(value, list) or isinstance(value, tuple) or isinstance(value, dict):
+            new_value = self._redismap_prefix + str(hash(self._name + str(key)))
+
+            if isinstance(value, list) or isinstance(value, tuple):
+                l = RedisList(self._r, new_value)
+                l.clear()  # 先清空之前存在的
+                l.extend(value)
+            elif isinstance(value, dict):
+                m = RedisMap(self._r, new_value)
+                m.clear()
+                m.update(value)
+
             value = new_value
-        logging.debug('redis map set %s\n%s' % (key, traceback.extract_stack()))
+
+        logging.debug('redis map set %s to %s\n%s' % (key, value, traceback.extract_stack()))
 
         self._r.hset(self._name, key, value)
 
     def __delitem__(self, key):
-        v = self._r.hget(self._name, key)
-        if self.__is_list(v):  # 删除list
-            self._r.delete(v)
-
-        self._r.hdel(self._name, key)
+        obj = self[key]
+        if not isinstance(obj, str):
+            obj.clear()                 # 清空对象
+        self._r.hdel(self._name, key)   # 删除map中的键
 
     def __len__(self):
         return self._r.hlen(self._name)
@@ -46,39 +64,27 @@ class RedisMap(object):
         return self._r.hexists(self._name, key)
 
     def rename_key(self, old, new):
-        remain_value = self._r.hget(self._name, old)
-        old_value = self[old]
-        new_value = self[new]
-        if isinstance(new_value, RedisList):  # 若new对应的值已经存在且是一个列表
-            if isinstance(old_value, RedisList):
-                if len(old_value) > len(new_value):
-                    for v in new_value:
-                        old_value.append(v)
-                    new_value.clear()
-                else:
-                    for v in old_value:
-                        new_value.append(v)
-                    old_value.clear()
-                    remain_value = self._r.hget(self._name, new)
-            else:
-                new_value.append(old_value)
+        value = self._r.hget(self._name, old)
 
-        self._r.hset(self._name, new, remain_value)
-
+        self._r.hset(self._name, new, value)
         self._r.hdel(self._name, old)
 
         logging.debug('rename redis map key : %s -> %s' % (old, new))
 
+    def update(self, values):
+        if values:
+            for k, v in values.items():
+                self[k] = v
+
     def keys(self):
-        return (k for k, _ in self._r.hscan_iter(self._name))
-        # return self._r.hkeys(self._name)
+        for k, _ in self._r.hscan_iter(self._name):
+            yield k
 
     def values(self):
-        return (RedisList(self._r, v) if self.__is_list(v) else v for _, v in self._r.hscan_iter(self._name))
-        # return [RedisList(self._r, v) if self.__is_list(v) else v for v in self._r.hvals(self._name)]
+        return (self[k] for k in self.keys())
 
     def items(self):
-        return ((k, RedisList(self._r, v) if self.__is_list(v) else v) for k, v in self._r.hscan_iter(self._name))
+        return ((k, self[k]) for k in self.keys())
 
     def clear(self):
         for k in self.keys():
@@ -120,10 +126,20 @@ class RedisList(object):
     def __len__(self):
         return self._r.llen(self._name)
 
+    def extend(self, values):
+        if values:
+            for v in values:
+                self.append(v)
+
     def append(self, *val):
         logging.debug('[RedisList] append : %s' % val)
         self._r.rpush(self._name, *val)
         return self
+
+    def pop(self):
+        val = self._r.rpop(self._name)
+        logging.debug('[RedisList] pop : %s' % val)
+        return val
 
     def clear(self):
         self._r.delete(self._name)
