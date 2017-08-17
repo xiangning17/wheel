@@ -81,11 +81,11 @@ Redis本身提供存储list的能力，因此设计方案为：对于想往map�
 
 # 更新
 
-* 为RedisMap增加存储子map的功能，并增加update方法。
-* 为RedisList增加extend和pop方法。
-
+**1. 为RedisMap增加存储子map的功能，并增加update方法。**
 
     m = RedisMap(r, 'map_name')
     m['mm'] = {'first':100, 'second':90, 'third':89}
     mm = rm['mm']       # 返回的也为RedisMap对象
     print mm['first']   # 输出“100”
+    
+**2. 为RedisList增加extend和pop方法。**
