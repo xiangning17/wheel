@@ -66,7 +66,7 @@ class AsyncExecutor(object):
         return future
 
 
-def async(n, exception_handler=None):
+def async_executor(n, exception_handler=None):
 
     def decoration(func):
 

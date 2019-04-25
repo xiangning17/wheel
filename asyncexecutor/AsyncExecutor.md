@@ -103,7 +103,7 @@ task1在进入等待的时候，会导致所在线程thread1进入wait的状态�
 
     from AsyncExecutor import async
     
-    @async(10)
+    @async_executor(10)
     def get_url(url):
         print url   # 输出当前url
         children = parse_and_get_children(url)  # 获取下一级链接
